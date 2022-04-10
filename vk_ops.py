@@ -1,3 +1,4 @@
+import datetime
 from random import randrange
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
@@ -17,7 +18,9 @@ class vkinderVK():
 		self.vk = vk_api.VkApi(token=g_token)
 		self.longpoll = VkLongPoll(self.vk)
 		self.DB = vkinderDB(db_name,db_password)
-	
+		self.country = 'Россия'
+		self.country_list = self.user_vk.method("database.getCountries", {"need_all": True, 'count':234} ) .get('items')
+
 		
 	def write_msg(self, user_id, message): 
 		self.vk.method('messages.send', {'user_id': user_id, 'message': message,  'random_id': randrange(10 ** 7),})
@@ -33,12 +36,51 @@ class vkinderVK():
 		user = self.vk.method("users.get", {"user_ids": user_id}) 
 		return user[0]['first_name'] +  ' ' + user[0]['last_name']
 
+
+	def get_user_params(self, uid):
+		user = self.vk.method('users.get', {'user_ids': uid, 'fields':'city,country,sex,bdate'}) 
+		print(user[0])
+		now = datetime.datetime.now()
+		year = user[0].get('bdate')
+		r = year.split('.')
+		res = str(now.year - int(r[2]))
+		gender = user[0].get('sex')
+		if gender == 1:
+			gender = 'М'
+		elif gender == 2:
+			gender = 'Ж'
+		else:
+			gender = 'Ж'
+		res = res+', '+gender+', О'
 		
-	def get_city_id(self, city):
-		resp = self.user_vk.method("database.getCities", {'q':city, "country_id": 1} ) 
+		try:
+			city = user[0].get('city').get('title')
+		except AttributeError as e:
+			city='Москва'
+		res = res+', '+city	
+			
+		try:
+			self.country = user[0].get('country').get('title')
+		except AttributeError as e:
+			self.country = 'Россия'
+			
+		res = res+', '+self.country
+		return res
+
+		
+	def get_city_id(self, city,country_id):
+		resp = self.user_vk.method("database.getCities", {'q':city, "country_id": country_id} ) 
 		if resp.get('count') == 0:
 			return -1
 		return resp.get('items')[0].get('id')
+
+
+	def get_country_id(self, country):
+		country = country.lower()
+		for item in self.country_list:
+			if country == item.get('title').lower():
+				return item.get('id')
+		return 1
 
 
 	def get_user_link(self, id):
@@ -77,7 +119,6 @@ class vkinderVK():
 		return 0, resp.get('items')
 
 	
-#download_images_and_record_to_DB(uid,selected_photos, self.get_user_name(uid), self.get_user_link(uid))
 	def download_images_and_record_to_DB(self, owner_id,sel_photos, name, link):
 		count = 0
 		
@@ -94,15 +135,15 @@ class vkinderVK():
 				byte_array.append(ufr.content);
 			count = count + 1
 		
-		#add(self, name, link, vkid, pic1=None, pic2=None, pic3=None):
 		while len(byte_array)<3:
 			byte_array.append(None)
 			
 		self.DB.add(name, link, owner_id, byte_array[0], byte_array[1], byte_array[2])
 			
-			
 
 	def run(self):
+		selected_photos=set()
+		request_sample=''
 		is_chat = False
 		vk_offset = 0
 		for event in self.longpoll.listen():
@@ -118,11 +159,19 @@ class vkinderVK():
 						
 						if request == "привет":
 							self.write_msg(event.user_id, f"Привет, {self.get_user_name(event.user_id)}")
+							self.write_msg(event.user_id, f"Понимаю команды:\nпривет\nищу пару\nпока")
 							
 						elif request == "ищу пару":
-							self.write_msg(event.user_id, "Введите возраст, пол, населенный пункт проживания и семейное положение искомого человека")
-							self.write_msg(event.user_id, "Например, вот такой запрос: 30, Ж, Москва, С")
-							self.write_msg(event.user_id, "будет искать замужнюю женщину 30 лет в Москве. С - замужем, О - одинокая")
+							request_sample = self.get_user_params(event.user_id)
+							self.write_msg(event.user_id, "Введите возраст, пол, семейное положение, населенный пункт проживания и страну искомого человека"+
+							"\nНапример, вот такой запрос: \n30, Ж, С, Москва, Россия"+
+							"\nбудет искать замужнюю женщину 30 лет в Москве."+
+							"\nС - замужем, О - одинокая")
+							
+							self.write_msg(event.user_id, "Вам предлагается такой поисковый запрос:")
+							self.write_msg(event.user_id, request_sample)
+							self.write_msg(event.user_id, "Если согласны с этим запросом, то наберите ДА\n"+
+							"или введите свой поисковый запрос.")
 							is_chat = True
 							
 						elif request == "пока" or request == "до свидания" or request == "всего хорошего" or request == "всего доброго":
@@ -130,24 +179,34 @@ class vkinderVK():
 							vk_offset= 0
 							self.write_msg(event.user_id, request)
 						else:
-							self.write_msg(event.user_id, 'Не понял, уточните.\nПонимаю: привет, ищу пару, пока')
+							self.write_msg(event.user_id, 'Не понял, уточните.\nПонимаю команды: \nпривет\nищу пару\nпока')
 							
 					else:
+						if request == 'да':
+							request = request_sample
+							
+						#удаляем пробелы	
+						tmp_ = ''
+						for i in range(0,len(request)):
+							if request[i]!=' ':
+								tmp_=tmp_+request[i]
+						request = tmp_
+						
 						#разбираем request
 						params = request.split(',')
 						lp = len(params)
-						if lp<=1 or lp>4:
+						if lp<=1 or lp>5:
 							self.write_msg(event.user_id, 'Запрос не верен. Попробуйте еще раз')
 							continue
 							
 						#проверка города
-						city_id = self.get_city_id(params[2])
+						city_id = self.get_city_id(params[3], self.get_country_id(params[4]))
 						if city_id==-1:
 							self.write_msg(event.user_id, f'Населенный пункт {params[2]} не найден. Попробуйте еще раз')
 							continue
 						
 						#проверка пола
-						sex_id = params[1]
+						sex_id = params[1].lower()
 						if sex_id == 'f' or sex_id == 'ж':
 							sex_id = 1
 						elif sex_id == 'm' or sex_id == 'м':
@@ -158,7 +217,7 @@ class vkinderVK():
 							
 										
 						#проверка семейного положения
-						status_id = params[3]
+						status_id = params[2].lower()
 						if status_id =='c' or status_id == 'с':
 							status_id = 4
 						elif status_id =='o' or status_id == 'о':
@@ -172,10 +231,11 @@ class vkinderVK():
 						except Exception as e:
 							self.write_msg(event.user_id, f'Возраст указан странно. Уточните запрос')
 							continue
-							
+												
+						
 						#выполнение поиска
 						self.write_msg(event.user_id, 'Выполняю поиск...')      
-						result = self.user_vk.method("users.search", {'q':'',  'count':SEARCH_COUNT, 'offset':vk_offset,'has_photo':True,  'city':city_id, 'sex':sex_id, 'status':status_id,'age_from':age_id, 'age_to':age_id})
+						result = self.user_vk.method("users.search", {'q':'',  'count':SEARCH_COUNT, 'country':self.get_country_id(params[4]), 'offset':vk_offset,'has_photo':True,  'city':city_id, 'sex':sex_id, 'status':status_id,'age_from':age_id, 'age_to':age_id})
 						vk_offset = vk_offset + SEARCH_COUNT
 						
 						print(result)
@@ -208,7 +268,7 @@ class vkinderVK():
 							# 7 отправить в чат ссылку на собственника этих фотографий
 							#
 						###################################
-							selected_photos=set()
+							selected_photos.clear()
 							#1. получаем id фотографии
 							max_id=1
 							while max_id!=0 and len(selected_photos) < 3:
@@ -240,19 +300,35 @@ class vkinderVK():
 												
 										if max_id !=0:
 											selected_photos.add(max_id)
-								
-								print(len(selected_photos))
-								
-							print(selected_photos)
+											
+							#отправить очередную запись в чат
+							#
+							#сначала фотографии 
 							for sp in selected_photos:
 								self.write_photo(event.user_id, uid, sp)
-																
+							#потом информацию									
 							self.write_msg(event.user_id, f'Страничка здесь: {self.get_user_link(uid)}')
 							self.write_msg(event.user_id, f'Имя: {self.get_user_name(uid)}')
 							
 							# и записать в базу данных бота
 							self.download_images_and_record_to_DB(uid,selected_photos, self.get_user_name(uid), self.get_user_link(uid))
-							
+													
+							self.write_msg(event.user_id, 'Показывать дальше? (ДА или НЕТ)')
+							stop_flag=False
+							for event_ in self.longpoll.listen():
+								if event_.type == VkEventType.MESSAGE_NEW:
+									if event_.to_me:
+										request = event_.text.lower()
+										if request=='да':
+											break
+										else:
+											stop_flag=True
+											break
+							if stop_flag==True:
+								self.write_msg(event.user_id, 'Прервано пользователем')
+								break
+								
+
 							print(self.get_user_link(uid))
 							
 							
