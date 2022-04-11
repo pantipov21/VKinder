@@ -1,4 +1,4 @@
-import datetime
+#import datetime
 from random import randrange
 import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
@@ -37,13 +37,81 @@ class vkinderVK():
 		return user[0]['first_name'] +  ' ' + user[0]['last_name']
 
 
+	def ask_for_users_byear(self, user_id): # всё равно сделал, до того, как Вам ответ написал. Убирать код не стал - практика всё же))
+		self.write_msg(user_id, 'Уточните, пожалуйста, год Вашего рождения')
+		for event in self.longpoll.listen():
+			if event.type == VkEventType.MESSAGE_NEW:
+				if event.to_me:
+					
+					try:	
+						r = int(event.text)
+						if r>1900 and r <2022:#в высшей степени условность, прекрасно это вижу
+							self.write_msg(user_id, 'Спасибо')
+							return r
+						else:
+							self.write_msg(user_id, 'Попробуйте еще раз')
+							
+					except ValueError as e:
+						self.write_msg(user_id, 'Попробуйте еще раз')
+
+
+	def check_ages(self,s):
+		if s.isdigit()==True:
+			return 0, s, s
+		else:
+			if s.count('-')==1:
+				ages = s.split('-')
+				if ages[0].isdigit() == True and ages[1].isdigit() == True:
+					afrom = ages[0]
+					ato = ages[1]
+					if ato<afrom:
+						t = afrom
+						afrom = ato
+						ato = t
+					return 1, str(afrom), str(ato)
+			return -1, None, None
+			
+
+
+	def ask_for_age(self, user_id):
+		self.write_msg(user_id, 'Какой возраст кандидатов ?\nПримеры:\n 25\n25-30')
+		for event in self.longpoll.listen():
+			if event.type == VkEventType.MESSAGE_NEW:
+				if event.to_me:
+					r = self.remove_spaces(event.text)
+					res, afrom, ato = self.check_ages(r)
+					if res == 0:
+						return afrom
+					elif res == 1:
+						return afrom+'-'+ ato
+					else:
+						self.write_msg(user_id, 'Попробуйте еще раз')
+						continue
+
+
+	def remove_spaces(self,s):
+		tmp_ = ''
+		for i in range(0,len(s)):
+			if s[i]!=' ':
+				tmp_=tmp_+s[i]
+		return tmp_
+
+
 	def get_user_params(self, uid):
-		user = self.vk.method('users.get', {'user_ids': uid, 'fields':'city,country,sex,bdate'}) 
+		user = self.vk.method('users.get', {'user_ids': uid, 'fields':'city,country,sex'})#,bdate'}) 
 		print(user[0])
-		now = datetime.datetime.now()
-		year = user[0].get('bdate')
-		r = year.split('.')
-		res = str(now.year - int(r[2]))
+#		now = datetime.datetime.now()
+		
+#		try:
+#			year = user[0].get('bdate')
+#			r = year.split('.')
+#			res = str(now.year - int(r[2]))
+#		except AttributeError as e:
+#			#res = str(now.year-self.ask_for_users_byear(uid))
+#			res='25'
+		
+		res = self.ask_for_age(uid)	
+			
 		gender = user[0].get('sex')
 		if gender == 1:
 			gender = 'М'
@@ -154,6 +222,11 @@ class vkinderVK():
 						self.write_msg(event.user_id, 'Бот остановлен.')
 						exit(0)
 						
+					elif request == "пока" or request == "до свидания" or request == "всего хорошего" or request == "всего доброго":
+						is_chat = False
+						vk_offset= 0
+						self.write_msg(event.user_id, request)
+						continue
 						
 					if is_chat == False:
 						
@@ -163,46 +236,44 @@ class vkinderVK():
 							
 						elif request == "ищу пару":
 							request_sample = self.get_user_params(event.user_id)
-							self.write_msg(event.user_id, "Введите возраст, пол, семейное положение, населенный пункт проживания и страну искомого человека"+
-							"\nНапример, вот такой запрос: \n30, Ж, С, Москва, Россия"+
-							"\nбудет искать замужнюю женщину 30 лет в Москве."+
-							"\nС - замужем, О - одинокая")
 							
 							self.write_msg(event.user_id, "Вам предлагается такой поисковый запрос:")
 							self.write_msg(event.user_id, request_sample)
 							self.write_msg(event.user_id, "Если согласны с этим запросом, то наберите ДА\n"+
 							"или введите свой поисковый запрос.")
+							self.write_msg(event.user_id,
+							"Например, вот такой запрос: \n30, Ж, С, Москва, Россия"+
+							"\nбудет искать замужнюю женщину 30 лет в Москве."+
+							"\nС - замужем, О - одинокая")
 							is_chat = True
 							
-						elif request == "пока" or request == "до свидания" or request == "всего хорошего" or request == "всего доброго":
-							is_chat = False
-							vk_offset= 0
-							self.write_msg(event.user_id, request)
 						else:
-							self.write_msg(event.user_id, 'Не понял, уточните.\nПонимаю команды: \nпривет\nищу пару\nпока')
+							self.write_msg(event.user_id, 'Не понял, уточните.\nПонимаю команды:\nпривет\nищу пару\nпока')
 							
 					else:
 						if request == 'да':
 							request = request_sample
 							
 						#удаляем пробелы	
-						tmp_ = ''
-						for i in range(0,len(request)):
-							if request[i]!=' ':
-								tmp_=tmp_+request[i]
-						request = tmp_
+						request = self.remove_spaces(request)
 						
 						#разбираем request
 						params = request.split(',')
 						lp = len(params)
-						if lp<=1 or lp>5:
+						if lp!=5:
 							self.write_msg(event.user_id, 'Запрос не верен. Попробуйте еще раз')
+							continue
+							
+						#проверка возраста
+						res, afrom, ato = self.check_ages(params[0])
+						if res ==-1:
+							self.write_msg(event.user_id, f'Возраст указан неправильно.')
 							continue
 							
 						#проверка города
 						city_id = self.get_city_id(params[3], self.get_country_id(params[4]))
 						if city_id==-1:
-							self.write_msg(event.user_id, f'Населенный пункт {params[2]} не найден. Попробуйте еще раз')
+							self.write_msg(event.user_id, f'Населенный пункт {params[3]} не найден. Попробуйте еще раз')
 							continue
 						
 						#проверка пола
@@ -225,17 +296,10 @@ class vkinderVK():
 						else:
 							self.write_msg(event.user_id, f'Семейное положение неясно. Уточните запрос')
 							continue
-						
-						try:
-							age_id = int(params[0])
-						except Exception as e:
-							self.write_msg(event.user_id, f'Возраст указан странно. Уточните запрос')
-							continue
 												
-						
 						#выполнение поиска
 						self.write_msg(event.user_id, 'Выполняю поиск...')      
-						result = self.user_vk.method("users.search", {'q':'',  'count':SEARCH_COUNT, 'country':self.get_country_id(params[4]), 'offset':vk_offset,'has_photo':True,  'city':city_id, 'sex':sex_id, 'status':status_id,'age_from':age_id, 'age_to':age_id})
+						result = self.user_vk.method("users.search", {'q':'',  'count':SEARCH_COUNT, 'country':self.get_country_id(params[4]), 'offset':vk_offset,'has_photo':True,  'city':city_id, 'sex':sex_id, 'status':status_id,'age_from':afrom, 'age_to':ato})
 						vk_offset = vk_offset + SEARCH_COUNT
 						
 						print(result)
